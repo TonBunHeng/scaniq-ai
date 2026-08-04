@@ -9,6 +9,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <!-- Bootstrap 5 -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <!-- SweetAlert2 -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <!-- Animate.css -->
@@ -23,9 +25,11 @@
 <div class="container py-5">
     <!-- Header -->
     <div class="d-flex justify-content-between align-items-center mb-5 animate__animated animate__fadeInDown">
-        <h2 class="header-title m-0">📸 Face Attendance AI</h2>
+        <h2 class="header-title m-0"><i class="bi bi-camera-reels-fill me-2"></i>Face Attendance AI</h2>
         <div class="d-flex gap-3">
-            <a href="<?php echo defined('APP_ENTRY') ? 'index.php?action=register_view' : 'register.php'; ?>" class="btn btn-info rounded-pill px-4 shadow-sm fw-bold">Register New Face</a>
+            <a href="<?php echo defined('APP_ENTRY') ? 'index.php?action=register_view' : 'register.php'; ?>" class="btn btn-info rounded-pill px-4 shadow-sm fw-bold">
+                <i class="bi bi-person-plus-fill me-1"></i>Register New Face
+            </a>
             <div id="connection-status" class="status-badge bg-success shadow-sm">
                 <span class="spinner-grow spinner-grow-sm me-2" role="status"></span>
                 Online
@@ -48,7 +52,7 @@
             <!-- User Info Card -->
             <div class="glass-card p-4 shadow-lg">
                 <h5 class="mb-4 d-flex align-items-center">
-                    <span class="me-2">👤</span> Identified User
+                    <i class="bi bi-person-badge-fill me-2 text-info"></i>Identified User
                 </h5>
                 <div>
                     <div class="user-info-label">Full Name</div>
@@ -79,12 +83,13 @@
 </div>
 
 <!-- Libraries -->
-<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+<script src="<?php echo defined('APP_ENTRY') ? 'assets/js/face-api.min.js' : '../../public/assets/js/face-api.min.js'; ?>"></script>
 
 <!-- Configuration & External Logic -->
 <script>
     // Global Config for External JS
     const API_URL = '<?php echo defined("APP_ENTRY") ? "index.php" : "../../public/index.php"; ?>';
+    const MODEL_URL = '<?php echo defined("APP_ENTRY") ? "models" : "../../public/models"; ?>';
 </script>
 <script src="<?php echo defined('APP_ENTRY') ? 'assets/js/scan.js' : '../../public/assets/js/scan.js'; ?>"></script>
 

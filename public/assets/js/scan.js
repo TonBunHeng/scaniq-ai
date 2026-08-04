@@ -7,64 +7,97 @@ let lastMatchedId = null;
 let lastAlertTime = 0;
 const COOLDOWN_MS = 8000;
 
-// 🎥 Start camera
+// Start camera with optimized resolution
 async function startVideo() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+        });
         video.srcObject = stream;
     } catch (err) {
         console.error("Camera access denied:", err);
-        statusDiv.innerHTML = '<span class="text-danger">❌ Camera access denied</span>';
+        statusDiv.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle-fill me-2"></i>Camera access denied</span>';
     }
 }
 
-// 🧠 Load AI Models
+// Load AI Models
 async function loadModels() {
-    const url = 'https://justadudewhohacks.github.io/face-api.js/models';
-    
+    const localUrl = (typeof MODEL_URL !== 'undefined') ? MODEL_URL : 'models';
+    const cdnUrl = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
+
     try {
         await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(url),
-            faceapi.nets.faceLandmark68Net.loadFromUri(url),
-            faceapi.nets.faceRecognitionNet.loadFromUri(url)
+            faceapi.nets.tinyFaceDetector.loadFromUri(localUrl),
+            faceapi.nets.faceLandmark68Net.loadFromUri(localUrl),
+            faceapi.nets.faceRecognitionNet.loadFromUri(localUrl)
         ]);
 
         modelsLoaded = true;
-        statusDiv.innerHTML = '<span class="text-success">✅ AI Models Ready</span>';
+        statusDiv.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill me-2"></i>AI Models Ready</span>';
     } catch (err) {
-        console.error("Error loading models:", err);
-        statusDiv.innerHTML = '<span class="text-danger">❌ AI Model Error</span>';
+        console.warn("Local model load failed, attempting CDN fallback...", err);
+        try {
+            await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri(cdnUrl),
+                faceapi.nets.faceLandmark68Net.loadFromUri(cdnUrl),
+                faceapi.nets.faceRecognitionNet.loadFromUri(cdnUrl)
+            ]);
+
+            modelsLoaded = true;
+            statusDiv.innerHTML = '<span class="text-success"><i class="bi bi-check-circle-fill me-2"></i>AI Models Ready</span>';
+        } catch (cdnErr) {
+            console.error("Error loading models from both local and CDN:", cdnErr);
+            statusDiv.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle-fill me-2"></i>AI Model Error</span>';
+        }
     }
 }
 
-// 👤 Load Users from Backend
+// Load Users from Backend and Pre-parse face descriptors for fast matching
 async function loadUsers() {
     try {
         const res = await fetch(`${API_URL}?action=getUsers`);
         if (!res.ok) throw new Error("API Connection Failed");
-        users = await res.json();
-        console.log(`Loaded ${users.length} registered users.`);
+        const rawUsers = await res.json();
+        users = rawUsers.map(u => {
+            let parsed = null;
+            try {
+                parsed = typeof u.face_data === 'string' ? JSON.parse(u.face_data) : u.face_data;
+            } catch (e) {
+                console.error("Invalid descriptor for user:", u.name);
+            }
+            return { ...u, parsedDescriptor: parsed };
+        }).filter(u => u.parsedDescriptor);
+        console.log(`Loaded ${users.length} valid registered users.`);
     } catch (err) {
         console.error("Error fetching users:", err);
-        statusDiv.innerHTML = '<span class="text-danger">❌ DB Sync Failed</span>';
+        statusDiv.innerHTML = '<span class="text-danger"><i class="bi bi-hdd-network-fill me-2"></i>DB Sync Failed</span>';
     }
 }
 
-// 📏 Euclidean Distance for Face Matching
+// Fast Euclidean Distance calculation using loop
 function euclideanDistance(a, b) {
-    return Math.sqrt(a.reduce((sum, val, i) => sum + Math.pow(val - b[i], 2), 0));
+    let sum = 0;
+    for (let i = 0; i < a.length; i++) {
+        const diff = a[i] - b[i];
+        sum += diff * diff;
+    }
+    return Math.sqrt(sum);
 }
 
-// 🔍 Scan Face
-async function scan() {
-    if (!modelsLoaded || users.length === 0) return;
+const scannedTodayUserIds = new Set();
+const detectorOptions = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
+let isScanning = false;
 
-    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+// Scan Face
+async function scan() {
+    if (!modelsLoaded || users.length === 0 || video.paused || video.ended) return;
+
+    const detection = await faceapi.detectSingleFace(video, detectorOptions)
         .withFaceLandmarks()
         .withFaceDescriptor();
 
     if (!detection) {
-        statusDiv.innerHTML = '<span class="text-info">🔍 Searching for face...</span>';
+        statusDiv.innerHTML = '<span class="text-info"><i class="bi bi-search me-2"></i>Searching for face...</span>';
         return;
     }
 
@@ -72,57 +105,56 @@ async function scan() {
     let matchedUser = null;
     let minDistance = 0.5;
 
-    users.forEach(user => {
-        try {
-            const savedDescriptor = JSON.parse(user.face_data);
-            const dist = euclideanDistance(currentDescriptor, savedDescriptor);
-
-            if (dist < minDistance) {
-                minDistance = dist;
-                matchedUser = user;
-            }
-        } catch (e) {
-            console.error("Invalid face data for user:", user.name);
+    for (let i = 0; i < users.length; i++) {
+        const user = users[i];
+        const dist = euclideanDistance(currentDescriptor, user.parsedDescriptor);
+        if (dist < minDistance) {
+            minDistance = dist;
+            matchedUser = user;
         }
-    });
+    }
 
     if (matchedUser) {
         updateUI(matchedUser);
-        
+
+        if (scannedTodayUserIds.has(matchedUser.id)) {
+            statusDiv.innerHTML = `<span class="text-success"><i class="bi bi-check-all me-2 fs-5"></i>Welcome back, ${matchedUser.name}! (Already checked in today)</span>`;
+            return;
+        }
+
         const now = Date.now();
         if (lastMatchedId !== matchedUser.id || (now - lastAlertTime > COOLDOWN_MS)) {
-            triggerAlert(matchedUser);
-            markAttendance(matchedUser.id);
             lastMatchedId = matchedUser.id;
             lastAlertTime = now;
+            markAttendance(matchedUser);
         }
     } else {
-        statusDiv.innerHTML = '<span class="text-danger animate__animated animate__shakeX">❌ Unknown Face Detected</span>';
+        statusDiv.innerHTML = '<span class="text-danger animate__animated animate__shakeX"><i class="bi bi-person-x-fill me-2"></i>Unknown Face Detected</span>';
     }
 }
 
-// 📋 Update Sidebar Info
+// Update Sidebar Info
 function updateUI(user) {
     document.getElementById('u_name').innerText = user.name;
     document.getElementById('u_age').innerText = user.age;
     document.getElementById('u_salary').innerText = "$" + parseFloat(user.salary).toLocaleString();
     document.getElementById('u_position').innerText = user.position;
 
-    statusDiv.innerHTML = `<span class="text-success">✅ Welcome, ${user.name}!</span>`;
+    statusDiv.innerHTML = `<span class="text-success"><i class="bi bi-person-check-fill me-2"></i>Welcome, ${user.name}!</span>`;
 }
 
-// 🔔 Premium SweetAlert
-function triggerAlert(user) {
+// Premium SweetAlert
+function triggerAlert(user, statusMessage = "Attendance Recorded Successfully", iconType = "success") {
     Swal.fire({
         title: `Welcome, ${user.name}!`,
         html: `
             <div class="text-start mt-3">
                 <p><b>Position:</b> ${user.position}</p>
-                <p><b>Status:</b> Attendance Recorded Successfully</p>
+                <p><b>Status:</b> ${statusMessage}</p>
                 <p class="small text-muted">Scanning completed at ${new Date().toLocaleTimeString()}</p>
             </div>
         `,
-        icon: 'success',
+        icon: iconType,
         timer: 3000,
         showConfirmButton: false,
         background: '#1e293b',
@@ -134,23 +166,57 @@ function triggerAlert(user) {
     });
 }
 
-// 📤 Mark Attendance in DB
-async function markAttendance(userId) {
+// Mark Attendance in DB
+async function markAttendance(user) {
+    if (scannedTodayUserIds.has(user.id)) return;
+
     try {
-        await fetch(`${API_URL}?action=attendance`, {
+        const res = await fetch(`${API_URL}?action=attendance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userId })
+            body: JSON.stringify({ user_id: user.id })
         });
+        const result = await res.json();
+
+        scannedTodayUserIds.add(user.id);
+
+        if (result.status === "saved") {
+            triggerAlert(user, "Attendance Recorded Successfully", "success");
+        } else if (result.status === "already_marked") {
+            triggerAlert(user, "Already Recorded Today", "info");
+        }
     } catch (err) {
         console.error("Failed to mark attendance:", err);
     }
 }
 
-// 🚀 Initialization
-window.onload = async () => {
-    await startVideo();
+// Non-overlapping loop to prevent high CPU usage and lag
+async function startScanLoop() {
+    while (true) {
+        if (modelsLoaded && users.length > 0 && !isScanning) {
+            isScanning = true;
+            try {
+                await scan();
+            } catch (err) {
+                console.error("Scan loop error:", err);
+            } finally {
+                isScanning = false;
+            }
+        }
+        await new Promise(r => setTimeout(r, 250));
+    }
+}
+
+// Initialization
+async function initApp() {
+    startVideo();
     await loadModels();
     await loadUsers();
-    setInterval(scan, 1000);
-};
+    startScanLoop();
+}
+
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    initApp();
+} else {
+    window.addEventListener('DOMContentLoaded', initApp);
+}

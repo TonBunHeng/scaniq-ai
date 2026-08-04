@@ -17,6 +17,14 @@ switch ($action) {
         $controller->register();
         break;
 
+    case 'updateUser':
+        $controller->updateUser();
+        break;
+
+    case 'deleteUser':
+        $controller->deleteUser();
+        break;
+
     case 'getUsers':
         $controller->getUsers();
         break;
